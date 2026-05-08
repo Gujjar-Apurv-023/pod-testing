@@ -20,6 +20,25 @@ To avoid the overhead of `npm install`, the system uses a **Snapshotted Symlink 
 - **Instant Workspace**: When a new project is generated, the worker creates a temporary directory and symlinks the global `node_modules`. This reduces "installation" time to near-zero.
 - **Next.js Integration**: Automatically starts `next dev` on an internal port and proxies traffic through the orchestrator.
 
+## 🚀 Running Locally & Port-Forwarding
+
+To access the Kubernetes orchestrator and preview workers from your local development machine, you must bridge the internal cluster service to your localhost.
+
+### Port-Forwarding Command
+Execute this in your terminal to map the **Worker Service** to port `30001`:
+```bash
+kubectl port-forward service/worker-service 30001:80
+```
+
+- **Local Port**: `30001` (Used by the frontend to communicate with the orchestrator)
+- **Cluster Port**: `80` (Internal port of the LoadBalancer service)
+
+### Typical Development Workflow
+1. **Start Redis**: `kubectl apply -f worker/k8s/redis.yaml`
+2. **Deploy Workers**: `kubectl apply -f worker/k8s/worker-deployment.yaml`
+3. **Run Port-Forward**: Use the command above.
+4. **Launch Frontend**: `npm run dev` (Ensure `VITE_WORKER_URL` is set to `http://localhost:30001`)
+
 ---
 
 ## 📊 Infrastructure & Resource Management

@@ -137,9 +137,14 @@ async function main() {
     console.log(`[${workerId}] Worker Orchestrator listening on ${port}`);
     console.log(`[${workerId}] Starting Next.js on internal port ${nextPort}`);
 
-    const nextProcess = spawn('npm', ['run', 'dev', '--', '-p', nextPort], {
+    const nextProcess = spawn('node', ['--max-old-space-size=1024', 'node_modules/.bin/next', 'dev', '-p', nextPort], {
       cwd: workDir,
-      env: { ...process.env, NODE_ENV: 'development' },
+      env: { 
+        ...process.env, 
+        NODE_ENV: 'development',
+        NEXT_TELEMETRY_DISABLED: '1',
+        WATCHPACK_POLLING: 'true' // Helpful for stable HMR in containers
+      },
       shell: true
     });
 
@@ -159,11 +164,21 @@ async function main() {
       console.log(`[${workerId}] Next.js exited with code ${code}`);
       process.exit(0);
     });
-  });
 
-  process.on('SIGTERM', () => {
-    server.close();
-    process.exit(0);
+    const cleanup = async () => {
+      console.log(`[${workerId}] Cleaning up workspace...`);
+      server.close();
+      try {
+        await fs.rm(workDir, { recursive: true, force: true });
+        console.log(`[${workerId}] Workspace deleted`);
+      } catch (e) {
+        console.error(`[${workerId}] Cleanup error:`, e);
+      }
+      process.exit(0);
+    };
+
+    process.on('SIGTERM', cleanup);
+    process.on('SIGINT', cleanup);
   });
 }
 
