@@ -1,80 +1,87 @@
-# ☁️ AI Studio Cloud Preview System (v2.0)
+# AI Studio Cloud Preview System (Kubernetes Optimized)
 
-![Version](https://img.shields.io/badge/version-2.0.0-blue.svg)
-![Architecture](https://img.shields.io/badge/architecture-microservices-success.svg)
-![Status](https://img.shields.io/badge/status-optimized-green.svg)
+A high-performance, glitch-free preview environment for AI-generated code. This system uses Kubernetes to isolate Next.js processes while maintaining ultra-low latency (<2s boot) and consistent asset routing.
 
-AI Studio is a high-performance, distributed ecosystem designed to compile and preview AI-generated code instantly. This version is highly optimized for **Kubernetes** with pre-bundled dependencies for near-zero boot times.
+## 🚀 Quick Start (Local Development)
 
----
-
-## 🏗️ System Architecture
-
-The system is split into three core microservices, allowing for independent scaling and failure isolation:
-
-### 1. 🖥️ Frontend (`/frontend`)
-- **Role:** User Interface & Editor.
-- **Local Port:** `5173`.
-- **Worker Config:** Points to `http://localhost:5000` (via Port-Forward).
-
-### 2. 🧠 API Backend (`/backend`)
-- **Role:** AI Code Generation / Mock API.
-- **Port:** `3000`.
-
-### 3. ⚙️ Worker Orchestrator (`/worker`)
-- **Role:** Heavy Lifting & Compilation.
-- **Internal Port:** `3001`.
-- **K8s Service Port:** `80`.
-- **Optimization:** Pre-bundled `node_modules` inside the Docker image (`v6+`) reduces boot time from **1 minute** to **under 2 seconds**.
-
----
-
-## 🚀 Deployment & Setup (Kubernetes)
-
-Follow these steps to get the system running in your `kind` cluster:
-
-### 1. Load Image to Cluster
-Ensure your cluster nodes have the latest optimized image:
+### 1. Build the Worker Image
 ```bash
-kind load docker-image apurv023/preview-worker:v6 --name preview-cluster
+# Clean existing images first (optional)
+docker build -t apurv023/preview-worker:v18 ./worker
 ```
 
-### 2. Apply Kubernetes Manifests
-Apply all configurations in the `k8s` directory:
+### 2. Load into Kind Cluster
 ```bash
-cd worker/k8s
-kubectl apply -f .
+kind load docker-image apurv023/preview-worker:v18 --name preview-cluster
 ```
 
-### 3. 🔌 Establish Port Forwarding (CRITICAL)
-To allow the local frontend to communicate with the workers inside Kubernetes, you **must** run the following port-forwarding command in a separate terminal:
-
+### 3. Deploy to Kubernetes
 ```bash
-kubectl port-forward service/worker-service 5000:80
+kubectl apply -f worker/k8s/worker-deployment.yaml
+kubectl apply -f worker/k8s/worker-service.yaml
+kubectl rollout restart deployment worker
 ```
-*This maps your local `http://localhost:5000` to the worker service inside the cluster.*
+
+### 4. Start the Tunnel
+To access the system on `localhost:30001`, keep this running in a separate terminal:
+```bash
+kubectl port-forward service/worker-service 30001:80
+```
 
 ---
 
-## 🛠️ Local Development (Quick Start)
+## 🏗️ Internal Architecture & Flow
 
-1. **Backend**: `cd backend && npm install && node server.js` (Port 3000)
-2. **Frontend**: `cd frontend && npm install && npm run dev` (Port 5173)
-3. **Worker**: Ensure the **Port Forwarding** (Step 3 above) is active.
+The system is split into three main components that work together to provide a seamless "WebContainer-like" experience:
 
-Open **[http://localhost:5173](http://localhost:5173)** to start generating previews.
+### 1. The Orchestrator (Express)
+The Orchestrator is the "brain" running on port `3001` inside the pod. 
+- **Worker Management**: It maintains a `WorkerPool` (Singleton) that spawns and kills workers.
+- **Isolation**: Each user session gets a dedicated `worker.js` process on a unique internal port.
+- **Smart Routing**:
+    - **Initial Load**: Iframe points to `/preview-proxy/:workerId/`.
+    - **Asset Routing**: When the browser requests `/static/chunks/main.js`, the orchestrator checks the `Referer` header to identify which worker owns that iframe and proxies the request accordingly.
+    - **API Preservation**: Unlike standard proxies, the orchestrator is configured **not** to strip the `/api` prefix, ensuring Next.js API routes work out-of-the-box.
+
+### 2. The Worker Process
+Each worker is a lightweight Node.js process that:
+- Creates a temporary workspace.
+- Symlinks `node_modules` from a global template to achieve **<1s installation times**.
+- Injects the AI-generated code.
+- Runs `next dev` on an internal offset port (e.g., `14000`).
+
+### 3. The Frontend (React)
+- Uses the `usePreview` hook to communicate with the Orchestrator.
+- Communicates with the Backend API (Port `3000`) for code generation.
+- Displays the preview via a secure iframe pointing to Port `30001`.
 
 ---
 
-## 📊 Monitoring & Stats
+## 🛠️ Important Configuration Notes
 
-| Command | Description |
-| :--- | :--- |
-| `kubectl get pods` | Check worker pod status and scaling. |
-| `kubectl get hpa` | Monitor CPU usage and auto-scaling events. |
-| `curl http://localhost:5000/api/preview/stats` | View active worker pool stats through the proxy. |
+### Sticky Sessions
+The `worker-service.yaml` uses `sessionAffinity: ClientIP`. This is critical for Kubernetes environments with multiple pods. It ensures that once a user is connected to a pod, all their subsequent asset requests (JS/CSS) go to the same pod where their worker is running.
+
+### Port Management
+- **External NodePort**: `30001`
+- **Internal Service Port**: `80`
+- **Pod Orchestrator**: `3001`
+- **Worker Processes**: `4000+`
+- **Next.js Instances**: `14000+`
 
 ---
 
-> [!IMPORTANT]
-> **Performance Note**: The Docker `v6` image contains pre-installed dependencies for the Next.js template. If you modify the template dependencies, remember to rebuild the image and update the tag in `worker-deployment.yaml`.
+## 🧹 Maintenance & Troubleshooting
+
+**Clear all local images:**
+```bash
+docker rmi $(docker images 'apurv023/preview-worker' -a -q) --force
+```
+
+**Check Worker Logs:**
+```bash
+kubectl logs -f deployment/worker
+```
+
+**Common Error: "Preview not found or expired"**
+This happens if the `Referer` header is stripped by the browser or if the worker process has timed out (TTL is 5 minutes by default). The system will automatically attempt to reboot the worker on the next "Generate" click.

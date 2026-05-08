@@ -18,86 +18,69 @@ const isAssetPath = (path) => {
          /\.(js|css|png|jpg|json|map|ico|svg)$/.test(path);
 };
 
-// 1. Next.js Asset & Static File Routing
-app.use((req, res, next) => {
-  if (!isAssetPath(req.path)) {
-    return next();
+// 1. Singleton Asset Proxy
+// We initialize this ONCE to avoid memory leaks
+const assetProxy = createProxyMiddleware({
+  target: 'http://localhost:4000', // Default, will be overridden by router
+  router: (req) => {
+    const referer = req.get('referer');
+    if (referer) {
+      const match = referer.match(/\/preview-proxy\/(w-[^\/]+)/);
+      if (match && match[1]) {
+        const worker = pool.getWorker(match[1]);
+        if (worker) return `http://localhost:${worker.port}`;
+      }
+    }
+    return null;
+  },
+  changeOrigin: true,
+  ws: true,
+  logLevel: 'silent',
+  onProxyReq: (proxyReq, req) => {
+    // Ensure the connection is kept alive for performance
+    proxyReq.setHeader('Connection', 'keep-alive');
   }
+});
 
-  const referer = req.get('referer');
-  if (referer) {
-    const match = referer.match(/\/preview-proxy\/(w-[^\/]+)/);
+// 2. Main Preview Proxy (The Iframe Target)
+const mainProxy = createProxyMiddleware({
+  target: 'http://localhost:4000',
+  router: (req) => {
+    // Extract workerId from the URL /preview-proxy/:workerId
+    const match = req.path.match(/\/preview-proxy\/(w-[^\/]+)/);
     if (match && match[1]) {
-      const workerId = match[1];
-      try {
-        const worker = pool.getWorker(workerId);
-        if (worker) {
-          return createProxyMiddleware({
-            target: `http://localhost:${worker.port}`,
-            changeOrigin: true,
-            ws: true,
-            logLevel: 'silent'
-          })(req, res, next);
-        }
-      } catch (err) {}
+      const worker = pool.getWorker(match[1]);
+      if (worker) return `http://localhost:${worker.port}`;
     }
-  }
-  next();
+    return null;
+  },
+  pathRewrite: (path) => {
+    return path.replace(/\/preview-proxy\/w-[^\/]+\/?/, '/');
+  },
+  changeOrigin: true,
+  ws: true,
+  logLevel: 'silent'
 });
 
-// 2. Application API Routes (Proxied to worker)
-// Use a generic middleware to avoid Express stripping the '/api' prefix
-app.use((req, res, next) => {
-  // Only handle /api calls that are NOT system preview calls
-  if (!req.path.startsWith('/api') || req.path.startsWith('/api/preview')) {
-    return next();
-  }
+// ROUTING LOGIC
+// Order matters here!
 
-  const referer = req.get('referer');
-  if (referer) {
-    const match = referer.match(/\/preview-proxy\/(w-[^\/]+)/);
-    if (match && match[1]) {
-      const workerId = match[1];
-      try {
-        const worker = pool.getWorker(workerId);
-        if (worker) {
-          return createProxyMiddleware({
-            target: `http://localhost:${worker.port}`,
-            changeOrigin: true,
-            logLevel: 'silent'
-          })(req, res, next);
-        }
-      } catch (err) {}
-    }
-  }
-  next();
-});
+// Route 1: Direct Iframe Entry
+app.use('/preview-proxy/:workerId', mainProxy);
 
-// 3. Main Preview Proxy Endpoint
-app.use('/preview-proxy/:workerId', (req, res, next) => {
-  const { workerId } = req.params;
-  try {
-    const worker = pool.getWorker(workerId);
-    if (worker) {
-      return createProxyMiddleware({
-        target: `http://localhost:${worker.port}`,
-        changeOrigin: true,
-        pathRewrite: {
-          [`^/preview-proxy/${workerId}`]: '',
-        },
-        ws: true,
-        logLevel: 'silent'
-      })(req, res, next);
-    }
-  } catch (err) {
-    res.status(404).send(`Worker ${workerId} not found or expired`);
-  }
-});
-
-// 4. Preview System Management API
+// Route 2: System API
 app.use('/api/preview', previewRouter);
 
-// 5. Healthcheck
+// Route 3: Application Assets & Next.js API
+app.use((req, res, next) => {
+  // If it's an asset or an application /api call, use the assetProxy
+  if (isAssetPath(req.path) || (req.path.startsWith('/api') && !req.path.startsWith('/api/preview'))) {
+    return assetProxy(req, res, next);
+  }
+  next();
+});
+
+// Healthcheck
 app.get('/health', (req, res) => {
   res.json({ status: 'active' });
 });
