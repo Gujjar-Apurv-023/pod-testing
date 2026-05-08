@@ -1,22 +1,26 @@
 const { spawn } = require('child_process');
 const path = require('path');
+const Redis = require('ioredis');
 
 class WorkerPool {
   constructor() {
-    // IMPORTANT
-    // keep minimum workers 0
     this.minWorkers = 0;
-
     this.maxWorkers = parseInt(process.env.POOL_MAX || '8', 10);
-
     this.portBase = parseInt(process.env.PORT_BASE || '4000', 10);
-
-    // 5 minutes idle timeout
     this.ttlMs = parseInt(process.env.WORKER_TTL || '300000', 10);
-
+    
     this.workers = new Map();
-
+    this.projectMap = new Map();
     this.availablePorts = [];
+
+    // Pod Info for Global Routing
+    this.podIp = process.env.POD_IP || 'localhost';
+
+    // Redis Setup
+    if (process.env.REDIS_URL) {
+      console.log(`[WorkerPool] Connecting to Redis: ${process.env.REDIS_URL}`);
+      this.redis = new Redis(process.env.REDIS_URL);
+    }
 
     for (let i = 0; i < 500; i++) {
       this.availablePorts.push(this.portBase + i);
@@ -24,185 +28,132 @@ class WorkerPool {
   }
 
   async init() {
-    console.log('[WorkerPool] Initialized');
+    console.log(`[WorkerPool] Initialized on Pod IP: ${this.podIp}`);
   }
 
   getAvailablePort() {
-    if (this.availablePorts.length === 0) {
-      throw new Error('No available ports');
-    }
-
+    if (this.availablePorts.length === 0) throw new Error('No available ports');
     return this.availablePorts.shift();
   }
 
   releasePort(port) {
-    if (!this.availablePorts.includes(port)) {
-      this.availablePorts.push(port);
-    }
+    if (!this.availablePorts.includes(port)) this.availablePorts.push(port);
   }
 
-  async spawnWorker() {
-    if (this.workers.size >= this.maxWorkers) {
-      throw new Error('Worker pool at capacity');
+  async spawnWorker(projectId) {
+    // 1. Check Global Redis for old worker
+    if (this.redis && projectId) {
+      const oldWorkerId = await this.redis.get(`project:${projectId}`);
+      if (oldWorkerId) {
+        console.log(`[WorkerPool] Global cleanup: Killing old worker ${oldWorkerId}`);
+        // We don't kill it directly if it's on another pod, 
+        // but we overwrite it in Redis. The old worker will timeout naturally or be killed if it's local.
+        await this.releaseWorker(oldWorkerId);
+      }
     }
 
-    const workerId = `w-${Date.now()}-${Math.random()
-      .toString(36)
-      .substr(2, 4)}`;
-
+    const workerId = `w-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`;
     const port = this.getAvailablePort();
-
-    console.log(`[${workerId}] Starting worker on port ${port}`);
 
     const worker = {
       id: workerId,
+      projectId,
       port,
+      podIp: this.podIp,
       status: 'booting',
       process: null,
       lastActive: Date.now()
     };
 
     this.workers.set(workerId, worker);
+    if (projectId) this.projectMap.set(projectId, workerId);
 
-    const workerScript = path.join(
-      __dirname,
-      '../preview-worker/worker.js'
-    );
+    // Register in Redis
+    if (this.redis) {
+      await this.redis.set(`worker:${workerId}`, JSON.stringify({ port, podIp: this.podIp, projectId }), 'PX', this.ttlMs);
+      if (projectId) await this.redis.set(`project:${projectId}`, workerId, 'PX', this.ttlMs);
+    }
 
+    const workerScript = path.join(__dirname, '../preview-worker/worker.js');
     const child = spawn('node', [workerScript, workerId, port], {
-      stdio: ['ignore', 'pipe', 'pipe']
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env, NEXT_TELEMETRY_DISABLED: '1' }
     });
 
     worker.process = child;
 
     return new Promise((resolve, reject) => {
       let resolved = false;
-
       child.stdout.on('data', (data) => {
         const out = data.toString();
-
-        console.log(`[${workerId}] ${out.trim()}`);
-
-        if (
-          out.includes('READY_SIGNAL') &&
-          !resolved
-        ) {
+        if (out.includes('READY_SIGNAL') && !resolved) {
           resolved = true;
-
           worker.status = 'busy';
-
-          console.log(
-            `[${workerId}] Ready on port ${port}`
-          );
-
           resolve(worker);
         }
       });
-
-      child.stderr.on('data', (data) => {
-        console.error(
-          `[${workerId} stderr]`,
-          data.toString()
-        );
-      });
-
-      child.on('exit', (code) => {
-        console.log(
-          `[${workerId}] Exited with code ${code}`
-        );
-
+      child.on('exit', async () => {
         this.workers.delete(workerId);
-
+        if (this.redis) {
+          await this.redis.del(`worker:${workerId}`);
+          if (projectId) await this.redis.del(`project:${projectId}`);
+        }
         this.releasePort(port);
       });
-
-      setTimeout(() => {
-        if (!resolved) {
-          reject(new Error('Worker boot timeout'));
-        }
-      }, 300000);
+      setTimeout(() => { if (!resolved) reject(new Error('Worker boot timeout')); }, 60000);
     });
   }
 
-  async acquireWorker() {
-    return await this.spawnWorker();
-  }
-
-  async releaseWorker(workerId) {
-    const worker = this.workers.get(workerId);
-
-    if (!worker) return;
-
-    console.log(`[${workerId}] Releasing worker`);
-
-    try {
-      worker.process.kill('SIGKILL');
-    } catch (e) {
-      console.error(e);
-    }
-
-    this.workers.delete(workerId);
-
-    this.releasePort(worker.port);
+  async acquireWorker(projectId) {
+    return await this.spawnWorker(projectId);
   }
 
   getWorker(workerId) {
     return this.workers.get(workerId);
   }
 
-  touchWorker(workerId) {
+  async releaseWorker(workerId) {
     const worker = this.workers.get(workerId);
+    if (worker && worker.process) {
+      worker.process.kill('SIGKILL');
+    }
+    this.workers.delete(workerId);
+    if (this.redis) await this.redis.del(`worker:${workerId}`);
+  }
 
+  // GLOBAL GET: Checks local then Redis
+  async getWorkerMetadata(workerId) {
+    // 1. Check local memory
+    const local = this.workers.get(workerId);
+    if (local) return { id: workerId, port: local.port, podIp: local.podIp, isLocal: true };
+
+    // 2. Check Redis
+    if (this.redis) {
+      const data = await this.redis.get(`worker:${workerId}`);
+      if (data) {
+        const meta = JSON.parse(data);
+        return { id: workerId, ...meta, isLocal: meta.podIp === this.podIp };
+      }
+    }
+    return null;
+  }
+
+  async touchWorker(workerId) {
+    const worker = this.workers.get(workerId);
     if (worker) {
       worker.lastActive = Date.now();
+      if (this.redis) await this.redis.pexpire(`worker:${workerId}`, this.ttlMs);
     }
   }
 
   getStats() {
     return {
-      total: this.workers.size
+      activeWorkers: this.workers.size,
+      availablePorts: this.availablePorts.length,
+      podIp: this.podIp
     };
-  }
-
-  shutdown() {
-    console.log(
-      '[WorkerPool] Shutting down workers'
-    );
-
-    for (const [id, worker] of this.workers) {
-      try {
-        worker.process.kill('SIGKILL');
-      } catch (e) {}
-    }
   }
 }
 
 const pool = new WorkerPool();
-
-setInterval(() => {
-  const now = Date.now();
-
-  for (const [id, worker] of pool.workers) {
-    const idleTime = now - worker.lastActive;
-
-    if (idleTime > pool.ttlMs) {
-      console.log(
-        `[${id}] Idle timeout reached. Destroying worker`
-      );
-
-      pool.releaseWorker(id);
-    }
-  }
-}, 5000);
-
-process.on('SIGINT', () => {
-  pool.shutdown();
-  process.exit(0);
-});
-
-process.on('SIGTERM', () => {
-  pool.shutdown();
-  process.exit(0);
-});
-
 module.exports = pool;

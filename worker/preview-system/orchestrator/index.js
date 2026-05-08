@@ -16,7 +16,7 @@ router.post('/start', async (req, res) => {
   }
 
   try {
-    const worker = await pool.acquireWorker();
+    const worker = await pool.acquireWorker(projectId);
 
     console.log(`[Orchestrator] Worker assigned ${worker.id} -> ${worker.port}`);
 
@@ -41,9 +41,7 @@ router.post('/start', async (req, res) => {
 
     res.json({
       workerId: worker.id,
-
-      // IMPORTANT FIX
-      previewUrl: `/api/preview/proxy/${worker.id}/`
+      previewUrl: `/preview-proxy/${worker.id}/`
     });
 
   } catch (err) {

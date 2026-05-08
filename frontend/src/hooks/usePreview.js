@@ -62,14 +62,18 @@ export function usePreview({
           console.log('[Preview] Response:', data);
 
           setWorkerId(data.workerId);
-
-          let url;
-
-          // ALWAYS use proxy URL
-          url = `${apiBase}/preview-proxy/${data.workerId}/`;
+          
+          let url = data.previewUrl;
+          if (url && !url.startsWith('http')) {
+            // Ensure apiBase doesn't end with slash if url starts with one
+            const base = apiBase.endsWith('/') ? apiBase.slice(0, -1) : apiBase;
+            const path = url.startsWith('/') ? url : `/${url}`;
+            url = `${base}${path}`;
+          } else if (!url) {
+            url = `${apiBase}/preview-proxy/${data.workerId}/`;
+          }
 
           console.log('[Preview] URL:', url);
-
           setPreviewUrl(url);
 
           // Give Next.js time to compile

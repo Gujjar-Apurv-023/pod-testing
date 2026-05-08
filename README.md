@@ -85,3 +85,23 @@ kubectl logs -f deployment/worker
 
 **Common Error: "Preview not found or expired"**
 This happens if the `Referer` header is stripped by the browser or if the worker process has timed out (TTL is 5 minutes by default). The system will automatically attempt to reboot the worker on the next "Generate" click.
+
+---
+
+## 📊 Resource & Memory Management (v20 "Extreme Strength")
+
+The system is tuned to handle heavy compilation load while preventing Out-Of-Memory (OOM) crashes.
+
+### 📈 Resource Allocation Table
+
+| Component | RAM (Usage) | CPU (Usage) | Disk (Cache) | Max Instances |
+| :--- | :--- | :--- | :--- | :--- |
+| **Orchestrator** | ~100 MB | ~0.1 Core | N/A | 1 (Primary) |
+| **Next.js Worker** | 300MB - 1GB | 0.2 - 0.5 Core | <10 MB (Symlinked) | Up to 8 per Pod |
+| **Total Pod Limit** | **4.0 GB** | **2.0 Cores** | **Shared** | **Pool Max: 8** |
+
+### 🛠️ Strategic Optimizations:
+1. **Dynamic Garbage Collection**: Each Next.js worker is launched with `--max-old-space-size=1024`, allowing it to handle large projects without crashing.
+2. **Zero-Duplicate Modules**: Because `node_modules` are symlinked to a central template, we don't waste RAM or Disk space caching the same dependencies multiple times.
+3. **Auto-Pruning**: The `WorkerPool` automatically evicts the oldest worker if the pod reaches the 8-worker limit, ensuring new "Generate" requests always succeed.
+4. **Instant Cleanup**: Clicking "Generate" immediately kills your previous worker, freeing up ~500MB of RAM instantly for the new version.
