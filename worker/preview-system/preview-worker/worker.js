@@ -137,13 +137,18 @@ async function main() {
     console.log(`[${workerId}] Worker Orchestrator listening on ${port}`);
     console.log(`[${workerId}] Starting Next.js on internal port ${nextPort}`);
 
-    const nextProcess = spawn('node', ['--max-old-space-size=1024', 'node_modules/.bin/next', 'dev', '-p', nextPort], {
+    const nextProcess = spawn('node', [
+      '--max-old-space-size=1024', 
+      '--optimize_for_size', 
+      '--max-semi-space-size=2',
+      'node_modules/.bin/next', 'dev', '-p', nextPort
+    ], {
       cwd: workDir,
       env: { 
         ...process.env, 
         NODE_ENV: 'development',
         NEXT_TELEMETRY_DISABLED: '1',
-        WATCHPACK_POLLING: 'true' // Helpful for stable HMR in containers
+        WATCHPACK_POLLING: 'true'
       },
       shell: true
     });

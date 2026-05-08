@@ -104,6 +104,26 @@ kubectl apply -f worker/k8s/worker-hpa.yaml
 ## ✨ Key Features
 - ✅ **<2s First Contentful Paint**: Achieved via pre-cached dependencies and symlinking.
 - ✅ **Distributed Consistency**: Redis ensures user sessions stay alive even if they jump between pods.
+
+## 💰 Cost Analysis & Scalability
+
+The architecture is designed to minimize "Idle Cost" while providing "Infinite Burst" capability. Below are the estimated costs based on standard Google Cloud (GKE) or AWS (EKS) pricing.
+
+| Scenario | Active Users (Simultaneous) | Daily Users (Est.) | Monthly Cost | Cost Per User |
+| :--- | :--- | :--- | :--- | :--- |
+| **Baseline (Idle)** | 0 - 12 | 100 - 500 | ~$185 | ~$0.012 |
+| **Standard (1k/day)** | ~10 average | 1,000 | ~$220 | ~$0.007 |
+| **Hard Max (Full Load)** | 80 | 7,500+ | ~$620 | ~$0.002 |
+
+### 💡 Cost Optimization Strategy
+To reduce the **Monthly Cost** by up to **60% ($75 - $100 range)**, it is recommended to use **Spot/Preemptible Instances** for the worker nodes. Since the orchestrator is distributed and state is saved in Redis, a node being reclaimed by the cloud provider will not cause data loss; the HPA will simply spin up a new worker on a different node.
+
+---
+
+## 📈 Future Roadmap
+- [ ] **Custom Domains**: Automated SSL/TLS provisioning for each preview worker.
+- [ ] **Hibernation**: Automatically "sleep" pods when 0 workers are active to save baseline costs.
+- [ ] **WebContainer Fallback**: Client-side rendering for very small projects to reduce cloud CPU usage.
 - ✅ **Auto-Healing**: Dead worker processes are automatically detected and replaced on the next request.
 - ✅ **Asset Persistence**: Fixed the "Webpack 404" bug by utilizing `originalUrl` tracking.
 - ✅ **Zero-Config API**: Next.js `/api` routes work automatically through the transparent proxy layer.

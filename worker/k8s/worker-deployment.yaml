@@ -18,7 +18,7 @@ spec:
     spec:
       containers:
         - name: worker
-          image: apurv023/preview-worker:v24
+          image: apurv023/preview-worker:v25
           ports:
             - containerPort: 3001
 
