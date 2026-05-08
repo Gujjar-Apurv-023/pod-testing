@@ -1,96 +1,136 @@
 # ☁️ AI Studio Cloud Preview System
 
-![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)
+![Version](https://img.shields.io/badge/version-1.1.0-blue.svg)
 ![Architecture](https://img.shields.io/badge/architecture-microservices-success.svg)
+![Status](https://img.shields.io/badge/status-ready-green.svg)
 
-AI Studio is a high-performance, distributed web application designed to instantly compile and preview AI-generated code. It utilizes a highly optimized, pre-warmed worker pool architecture to deliver near-instant Next.js previews directly in the user's browser.
-
-This project is separated into a scalable microservice architecture to support enterprise-grade deployments combining Kubernetes (K8s) for lightweight services and dedicated EC2 instances for heavy, isolated compilation workloads.
-
----
-
-## 🌟 Key Features
-
-- **Near-Instant Previews:** Utilizes a pre-warmed pool of Next.js dev servers to reduce preview boot times from >15s down to 1-3s.
-- **Microservice Architecture:** Fully decoupled Frontend, Backend, and Worker orchestrators allowing for independent scaling and failure isolation.
-- **Dynamic Proxy Routing:** Seamlessly injects code and routes preview traffic from the frontend iframe to the dedicated internal Next.js worker via dynamically generated proxy paths.
-- **Cloud-Native Deployment Ready:** Built with Kubernetes and AWS EC2 integration in mind, balancing containerized stateless API handling with raw compute performance for builds.
+AI Studio is a high-performance, distributed ecosystem designed to compile and preview AI-generated code instantly. It uses a **pre-warmed worker pool architecture** to deliver near-instant Next.js previews directly in the browser.
 
 ---
 
-## 🏗️ Architecture
+## 🏗️ System Architecture
 
-The system consists of three core components:
+The system is split into three core microservices, allowing for independent scaling and failure isolation:
 
-1. **Frontend (`/frontend`)**
-   - **Stack:** React, Vite, TailwindCSS (optional).
-   - **Role:** The user interface containing the code editor and the `<PreviewFrame>`. It communicates with the Backend to fetch code and directly injects it into the Worker Pool for rendering.
+### 1. 🖥️ Frontend (`/frontend`)
+- **Role:** User Interface & Editor.
+- **Port:** `5173` (Vite default).
+- **Function:** Fetches code from the Backend and coordinates with the Worker Orchestrator to boot previews.
 
-2. **API Backend (`/backend`)**
-   - **Stack:** Node.js, Express.
-   - **Role:** The stateless core API server. Handles code generation requests, user management, and serves mocked code structures to the frontend.
+### 2. 🧠 API Backend (`/backend`)
+- **Role:** AI Code Generation / Mock API.
+- **Port:** `3000`.
+- **Function:** Serves the actual React/Next.js code structures that need to be previewed.
 
-3. **Worker Orchestrator (`/worker`)**
-   - **Stack:** Node.js, Next.js, HTTP-Proxy.
-   - **Role:** The heavy-lifting server. It manages a dynamic pool of Next.js child processes. It allocates available ports, injects user code, and sets up real-time proxy middlewares to stream the compiled output back to the user's iframe.
+### 3. ⚙️ Worker Orchestrator (`/worker`)
+- **Role:** Heavy Lifting & Compilation.
+- **Port:** `3001` (Orchestrator), `4000+` (Dynamic Worker Ports).
+- **Function:** Manages a pool of Next.js child processes. It injects code, handles dynamic routing via proxy, and monitors worker health.
 
 ---
 
-## 🚀 Quick Start (Local Development)
+## 🚀 Quick Start (Local Setup)
 
-To run the entire ecosystem locally on your machine for development:
+To get the entire system running on your local machine:
 
-1. **Setup Environment:**
-   Ensure your `frontend/.env` contains:
-   ```env
-   VITE_API_URL=http://localhost:3000
-   VITE_WORKER_URL=http://localhost:3001
-   ```
+### 1. Configure Environment
+Ensure your `frontend/.env` (or `App.jsx` defaults) point to the correct services:
+```env
+VITE_API_URL=http://localhost:3000
+VITE_WORKER_URL=http://localhost:3001
+```
 
-2. **Start Backend (Terminal 1):**
+### 2. Launch Services (3 Terminals)
+
+**Terminal 1: Backend**
+```bash
+cd backend && npm install && node server.js
+```
+
+**Terminal 2: Worker Orchestrator**
+```bash
+cd worker && npm install && npm run dev
+```
+
+**Terminal 3: Frontend**
+```bash
+cd frontend && npm install && npm run dev
+```
+
+Open **[http://localhost:5173](http://localhost:5173)** in your browser.
+
+---
+
+## ☸️ Kubernetes Deployment
+
+The worker component is pre-configured for Kubernetes deployment.
+
+### Deploying the Worker:
+1. **Build & Push Image:**
    ```bash
-   cd backend
-   npm install
-   node server.js
+   docker build -t your-registry/preview-worker:latest ./worker
+   docker push your-registry/preview-worker:latest
+   ```
+2. **Apply Manifests:**
+   ```bash
+   kubectl apply -f worker/k8s/worker-deployment.yaml
+   kubectl apply -f worker/k8s/worker-service.yaml
+   kubectl apply -f worker/k8s/worker-hpa.yaml
    ```
 
-3. **Start Worker Pool (Terminal 2):**
-   ```bash
-   cd worker
-   npm install
-   node server.js
-   ```
-
-4. **Start Frontend (Terminal 3):**
-   ```bash
-   cd frontend
-   npm install
-   npm run dev
-   ```
-   Open `http://localhost:5173` in your browser.
+### Deployment Features:
+- **Auto-Scaling:** HPA is configured to scale workers based on CPU (Target: 65%).
+- **Health Checks:** Liveness and Readiness probes verify the orchestrator status on port `3001`.
+- **Resource Management:** Requests 1 CPU / 1GB RAM; Limits 4 CPU / 4GB RAM.
 
 ---
 
-## 🌍 Production Deployment
+## 🛠️ Configuration Options
 
-The recommended production architecture distributes these services across Kubernetes and EC2:
-
-- **Frontend:** Hosted on a CDN (Vercel/Netlify) or as an NGINX Pod in K8s.
-- **Backend:** Deployed as a scalable Deployment/Service in Kubernetes.
-- **Worker Orchestrator:** Deployed on a dedicated, hardened AWS EC2 instance (e.g., `t3.large` or `c5.xlarge`) to provide raw compute for Next.js builds.
-
-For detailed deployment strategies (including routing configurations and Cloudflare/AWS proxy setups), see the [**Deployment Guide (README-Deployment.md)**](./README-Deployment.md).
+| Variable | Service | Description | Default |
+| :--- | :--- | :--- | :--- |
+| `WORKER_PORT` | Worker | Port the orchestrator listens on | `3001` |
+| `POOL_MAX` | Worker | Max concurrent Next.js workers | `8` |
+| `WORKER_TTL` | Worker | Idle timeout for workers (ms) | `300000` (5m) |
+| `PORT_BASE` | Worker | Starting port for workers | `4000` |
+| `VITE_API_URL` | Frontend | URL of the API Backend | `http://localhost:3000` |
+| `VITE_WORKER_URL`| Frontend | URL of the Worker Orchestrator | `http://localhost:3001` |
 
 ---
 
-## 🛡️ Security Considerations
+## 🏁 What to do right after? (Next Steps)
 
-Executing untrusted, AI-generated code is inherently risky. If deploying the Worker Pool to an EC2 instance, strict OS-level hardening is required to prevent server compromise. 
+Now that the core system is optimized and ready, here is your checklist to move forward:
 
-Key security measures implemented/required:
-- **Unprivileged Execution:** Workers must run under a non-sudo sandbox user.
-- **Metadata Protection:** AWS IMDS (`169.254.169.254`) must be blocked via `iptables`.
-- **Resource Limits:** OS-level `ulimit` restrictions are required to prevent memory leaks and fork bombs.
-- **File System Jails:** Strict directory ownership limiting access to the project root.
+### 1. ✅ Verify K8s Connectivity
+Run the following to ensure your worker is healthy in the cluster:
+```bash
+kubectl get pods -l app=worker
+kubectl logs -f deployment/worker
+```
 
-Read the **Security & OS Hardening** section in the [Deployment Guide](./README-Deployment.md) for full instructions.
+### 2. 🔌 Test Port-Forwarding (Local Testing of K8s)
+If you are testing the K8s deployment locally, forward the service:
+```bash
+kubectl port-forward service/worker-service 3001:80
+```
+Then try generating a preview from your frontend.
+
+### 3. 📦 Pre-bundle Template Dependencies
+The current worker runs `npm install` on every spawn. For production:
+- Update the `Dockerfile` to `npm install` inside the `template` directory.
+- This will reduce worker boot time from ~15s to **under 2s**.
+
+### 4. 🛡️ Security Hardening
+If exposing to the internet:
+- Implement the `iptables` rules documented in [README-Deployment.md](./README-Deployment.md).
+- Ensure the worker runs as a non-root user (already configured in `worker-deployment.yaml`).
+
+### 5. 🌐 Configure Ingress
+Set up an Ingress controller to expose the `worker-service` on a public domain (e.g., `preview.yourdomain.com`).
+
+---
+
+> [!TIP]
+> **Need to see stats?**
+> You can check the current worker pool status by hitting `GET http://localhost:3001/api/preview/stats`.

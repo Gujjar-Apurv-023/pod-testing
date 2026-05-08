@@ -8,10 +8,20 @@ export default function App() {
 
   const handleGenerateNext = async () => {
     setIsGenerating(true);
+
     try {
-      const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:3000';
+      // Backend API (AI code generation)
+      const apiUrl =
+        import.meta.env.VITE_API_URL || 'http://localhost:3000';
+
       const res = await fetch(`${apiUrl}/next-code`);
+
+      if (!res.ok) {
+        throw new Error('Failed to generate code');
+      }
+
       const data = await res.json();
+
       setFiles(data.files || data);
     } catch (err) {
       console.error(err);
@@ -22,26 +32,41 @@ export default function App() {
 
   return (
     <div className="grid grid-cols-2 h-screen">
+      {/* Left Panel */}
       <div className="p-6 bg-slate-50 flex flex-col items-start gap-4">
-        <h1 className="text-2xl font-bold">AI Studio Preview Demo</h1>
-        <p className="text-gray-600">Click a button to generate mock code and boot it in the preview frame.</p>
-        
+        <h1 className="text-2xl font-bold">
+          AI Studio Preview Demo
+        </h1>
+
+        <p className="text-gray-600">
+          Click a button to generate mock code and boot it in the preview frame.
+        </p>
+
         <div className="flex gap-4">
-          <button 
+          <button
             onClick={handleGenerateNext}
-            className="px-4 py-2 bg-black text-white rounded hover:bg-gray-800"
+            className="px-4 py-2 bg-black text-white rounded hover:bg-gray-800 disabled:opacity-50"
             disabled={isGenerating}
           >
-            {isGenerating ? 'Loading...' : 'Generate Next.js Demo'}
+            {isGenerating
+              ? 'Loading...'
+              : 'Generate Next.js Demo'}
           </button>
         </div>
       </div>
 
+      {/* Right Panel */}
       <div className="border-l border-gray-200">
         <PreviewFrame
           projectId={projectId}
           files={files}
-          apiBase={import.meta.env.VITE_WORKER_URL || 'http://localhost:3001'}
+
+          // Worker Orchestrator URL
+          apiBase={
+            import.meta.env.VITE_WORKER_URL ||
+            (window.location.hostname === 'localhost' ? 'http://localhost:3001' : window.location.origin)
+          }
+
           className="border-0"
         />
       </div>
