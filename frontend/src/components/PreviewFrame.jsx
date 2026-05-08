@@ -22,6 +22,12 @@ export const PreviewFrame = ({ projectId, files, apiBase, onReady, className }) 
             <span className="text-gray-400 mr-2">🔒</span>
             {previewUrl}
           </div>
+          
+          {/* Worker Info Badge */}
+          <div className="ml-4 px-2 py-1 bg-blue-50 text-blue-700 rounded border border-blue-100 text-[10px] font-mono whitespace-nowrap">
+            WORKER: {previewUrl.split('/preview-proxy/')[1]?.split('/')[0] || 'active'}
+          </div>
+
           <a 
             href={previewUrl} 
             target="_blank" 

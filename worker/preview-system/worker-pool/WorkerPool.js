@@ -120,7 +120,7 @@ class WorkerPool {
         if (!resolved) {
           reject(new Error('Worker boot timeout'));
         }
-      }, 60000);
+      }, 300000);
     });
   }
 

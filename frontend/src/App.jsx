@@ -64,7 +64,7 @@ export default function App() {
           // Worker Orchestrator URL
           apiBase={
             import.meta.env.VITE_WORKER_URL ||
-            (window.location.hostname === 'localhost' ? 'http://localhost:3001' : window.location.origin)
+            (window.location.hostname === 'localhost' ? 'http://localhost:30001' : window.location.origin)
           }
 
           className="border-0"

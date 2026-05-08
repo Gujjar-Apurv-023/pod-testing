@@ -10,6 +10,10 @@ RUN npm install
 # Copy full project
 COPY . .
 
+# Pre-install dependencies for the Next.js template to avoid 'npm install' at runtime
+WORKDIR /app/preview-system/preview-worker/template
+RUN npm install
+
 # Return to app root
 WORKDIR /app
 

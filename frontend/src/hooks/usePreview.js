@@ -66,7 +66,7 @@ export function usePreview({
           let url;
 
           // ALWAYS use proxy URL
-          url = `${apiBase}/api/preview/proxy/${data.workerId}/`;
+          url = `${apiBase}/preview-proxy/${data.workerId}/`;
 
           console.log('[Preview] URL:', url);
 

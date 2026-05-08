@@ -12,5 +12,7 @@ spec:
     - protocol: TCP
       port: 80
       targetPort: 3001
+      nodePort: 30001
 
-  type: ClusterIP
+  type: NodePort
+  sessionAffinity: ClientIP
